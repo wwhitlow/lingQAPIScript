@@ -17,6 +17,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.parse import parse_qsl
+from urllib.parse import urlencode
+from urllib.parse import urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -36,8 +39,18 @@ def slugify(value: str) -> str:
     return value.strip("-") or "lesson"
 
 
-def fetch_html(url: str, timeout: int = 25) -> str:
-    response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+def with_query_param(url: str, key: str, value: str) -> str:
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query[key] = value
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def fetch_html(url: str, accept_language: str | None, timeout: int = 25) -> str:
+    headers = {"User-Agent": USER_AGENT}
+    if accept_language:
+        headers["Accept-Language"] = accept_language
+    response = requests.get(url, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response.text
 
@@ -55,7 +68,7 @@ def score_node_text(text: str) -> int:
     return word_count + (paragraphs * 4)
 
 
-def extract_content(html: str, fallback_title: str) -> ExtractionResult:
+def extract_content(html: str, fallback_title: str, selectors: list[str] | None = None) -> ExtractionResult:
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
@@ -64,6 +77,17 @@ def extract_content(html: str, fallback_title: str) -> ExtractionResult:
     title = fallback_title
     if soup.title and soup.title.string:
         title = soup.title.string.strip()
+
+    if selectors:
+        parts = []
+        for selector in selectors:
+            for node in soup.select(selector):
+                text = clean_text(node.get_text("\n"))
+                if text:
+                    parts.append(text)
+        if parts:
+            return ExtractionResult(title=title, text="\n\n".join(parts))
+        print("WARNING: CSS selector(s) matched no content; falling back to heuristic extraction.", file=sys.stderr)
 
     candidates = []
     for selector in ["article", "main", "section"]:
@@ -126,8 +150,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch webpage content and prepare/import LingQ lesson")
     parser.add_argument("--url", required=True, help="Source article URL")
     parser.add_argument("--title", help="Override lesson title")
+    parser.add_argument(
+        "--source-lang",
+        default=os.getenv("SOURCE_LANG"),
+        help="Force source-site language via query param (example: es)",
+    )
+    parser.add_argument(
+        "--accept-language",
+        default=os.getenv("SOURCE_ACCEPT_LANGUAGE"),
+        help='HTTP Accept-Language header (example: "es-ES,es;q=0.9")',
+    )
     parser.add_argument("--language", default=os.getenv("LINGQ_LANGUAGE", "en"), help="LingQ language code (default: en)")
-    parser.add_argument("--collection", type=int, default=os.getenv("LINGQ_COLLECTION_ID"), help="LingQ course/collection id")
+    parser.add_argument(
+        "--collection",
+        type=int,
+        default=int(os.getenv("LINGQ_COLLECTION_ID")) if os.getenv("LINGQ_COLLECTION_ID") else None,
+        help="LingQ course/collection id",
+    )
+    parser.add_argument(
+        "--selector",
+        action="append",
+        dest="selectors",
+        metavar="CSS_SELECTOR",
+        help="CSS selector to extract content (repeatable; matched nodes are concatenated in order)",
+    )
     parser.add_argument("--upload", action="store_true", help="Upload directly to LingQ API")
     parser.add_argument("--out-dir", default="./imports", help="Output folder for text + payload artifacts")
     parser.add_argument("--min-words", type=int, default=120, help="Fail if extracted text has fewer words")
@@ -137,18 +183,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     api_key = os.getenv("LINGQ_API_KEY")
+    source_url = args.url
 
-    title_seed = args.title or derive_default_title(args.url)
+    if args.source_lang:
+        source_url = with_query_param(source_url, "lang", args.source_lang)
+
+    title_seed = args.title or derive_default_title(source_url)
 
     try:
-        html = fetch_html(args.url)
-        extracted = extract_content(html, fallback_title=title_seed)
+        html = fetch_html(source_url, accept_language=args.accept_language)
+        extracted = extract_content(html, fallback_title=title_seed, selectors=args.selectors)
     except requests.RequestException as exc:
         print(f"ERROR: Unable to fetch page: {exc}", file=sys.stderr)
         return 1
 
     title = args.title or extracted.title or title_seed
-    text = clean_text(extracted.text)
+    text = extracted.text
     word_count = len(re.findall(r"\w+", text))
 
     if word_count < args.min_words:
@@ -175,6 +225,8 @@ def main() -> int:
     print(f"Prepared lesson text: {text_path}")
     print(f"Prepared LingQ payload: {payload_path}")
     print(f"Extracted words: {word_count}")
+    if source_url != args.url:
+        print(f"Fetched URL: {source_url}")
 
     if not args.upload:
         print("Upload skipped. Use --upload after setting LINGQ_API_KEY.")
