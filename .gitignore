@@ -2,3 +2,4 @@
 .venv
 imports/
 __pycache__
+lingq_config.json
