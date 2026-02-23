@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium   # one-time, required for lingq_interactive.py
 ```
 
 ## Running the script
@@ -63,3 +64,45 @@ python lingq_daily_import.py --url "https://example.com/article" \
 ```
 
 Any valid CSS selector supported by BeautifulSoup/soupsieve works (class, id, attribute, pseudo-class, etc.). If none of the selectors match, the script warns to stderr and falls back to the heuristic.
+
+## Interactive selector tool (`lingq_interactive.py`)
+
+A visual alternative to writing selectors by hand. Opens a real Chromium browser, overlays a sidebar, and lets you point-and-click to build selectors. Saves a `lingq_config.json` that can then be used for headless/cron imports.
+
+**First time on a new site:**
+```bash
+python lingq_interactive.py --url "https://example.com/article"
+# Browser opens → hover to preview, click to select (green highlight)
+# Fill API Key + Language in the sidebar
+# Click "Save Config & Exit"
+# Prompted: "Upload to LingQ now? [y/N]"
+```
+
+**Subsequent headless runs (cron-friendly):**
+```bash
+python lingq_interactive.py --headless
+python lingq_interactive.py --headless --upload
+python lingq_interactive.py --headless --config my_site.json --upload
+```
+
+**Config file schema** (`lingq_config.json`):
+```json
+{
+  "url": "https://...",
+  "selectors": [".article-body"],
+  "api_key": "your-lingq-token",
+  "language": "en",
+  "title": null,
+  "collection_id": null,
+  "source_lang": null,
+  "accept_language": null
+}
+```
+
+`api_key` in the config takes precedence; falls back to `LINGQ_API_KEY` env var if blank.
+
+**Key implementation details** (`lingq_interactive.py`):
+- `_INJECTED_JS` — self-contained JS IIFE injected via `page.evaluate()` after DOM load; guarded by `window.__lingqSelectorActive` to prevent double-init
+- `interactive_mode()` — launches Playwright Chromium headed, re-injects sidebar on every navigation, blocks on `page.wait_for_function("window.__lingqDone")` (no timeout)
+- `headless_mode()` — imports functions directly from `lingq_daily_import` (same directory), runs the same fetch → extract → validate → write → upload pipeline
+- Selector generator walks the DOM upward using `#id`, `.class`, or `:nth-child` disambiguation

@@ -1,2 +1,5 @@
 beautifulsoup4>=4.12.0
 requests>=2.31.0
+# Interactive selector tool (lingq_interactive.py)
+# After installing, run once: playwright install chromium
+playwright>=1.40
