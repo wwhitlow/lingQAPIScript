@@ -659,7 +659,7 @@ _HTML = """<!DOCTYPE html>
   /* ── Tiny UI helpers ──────────────────────────────────────────────────── */
   function g(id)  { return document.getElementById(id).value; }
   function v(id, val) { document.getElementById(id).value = val; }
-  function show(id) { document.getElementById(id).style.display = ''; }
+  function show(id) { document.getElementById(id).style.display = 'block'; }
   function hide(id) { document.getElementById(id).style.display = 'none'; }
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
 
