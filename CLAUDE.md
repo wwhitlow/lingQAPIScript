@@ -11,6 +11,30 @@ pip install -r requirements.txt
 playwright install chromium   # one-time, required for lingq_interactive.py
 ```
 
+## Web UI (recommended for non-technical users)
+
+| Platform | Launcher | Notes |
+|---|---|---|
+| macOS | Double-click `start.command` in Finder | First run: right-click → Open if Gatekeeper blocks it |
+| Windows | Double-click `start.bat` in File Explorer | Requires Python installed with "Add to PATH" checked |
+
+```bash
+# Or from the terminal (any platform):
+python lingq_app.py
+```
+
+**First time on a new machine:** both launchers auto-create the venv and install all dependencies (including Playwright's Chromium). After that, double-clicking is all that's needed.
+
+**Architecture** (`lingq_app.py`):
+- Single-file Flask app with embedded HTML/CSS/JS (no separate template files)
+- Serves on `127.0.0.1:5050` (auto-increments if busy)
+- Background jobs run as subprocesses of `lingq_interactive.py`; output is streamed to the browser via polling (`GET /api/job/<id>?offset=N`)
+- Config files (`lingq_*.json`) are read/written directly from the project directory
+
+**API endpoints:** `GET /api/sites`, `GET|POST /api/site/<file>`, `DELETE /api/site/<file>`, `POST /api/launch`, `POST /api/run`, `GET /api/job/<id>`
+
+---
+
 ## Running the script
 
 Prepare output files only (no upload):
