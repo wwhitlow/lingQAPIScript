@@ -36,7 +36,8 @@ _INJECTED_JS = r"""
   // Guard: don't initialise twice on the same page
   if (window.__lingqSelectorActive) return;
   window.__lingqSelectorActive = true;
-  window.__lingqDone  = false;
+  window.__lingqDone   = false;
+  window.__lingqReload = false;
   window.__lingqConfig = null;
 
   /* ── Styles ──────────────────────────────────────────────────────────── */
@@ -149,8 +150,12 @@ _INJECTED_JS = r"""
           <input id="__lak" type="password" placeholder="LingQ token" autocomplete="off" />
         </div>
         <div class="field">
-          <label>Language code</label>
+          <label>LingQ language code</label>
           <input id="__llg" type="text" placeholder="en" value="en" />
+        </div>
+        <div class="field">
+          <label>Browser language <span style="color:#64748b">(page locale, e.g. es-ES)</span></label>
+          <input id="__lbl" type="text" placeholder="e.g. es-ES" />
         </div>
         <div class="field">
           <label>Lesson title <span style="color:#64748b">(optional)</span></label>
@@ -166,6 +171,7 @@ _INJECTED_JS = r"""
       <div class="status" id="__lst">Hover elements to preview &bull; Click to select</div>
       <button class="btn btn-p" id="__lbx">&#10003; Save Config &amp; Exit</button>
       <button class="btn btn-s" id="__lbs">&#128190; Save Config (keep open)</button>
+      <button class="btn btn-s" id="__lbr">&#8635; Reload with Language</button>
       <button class="btn btn-d" id="__lbc">&#10007; Clear All Selections</button>
     </div>
   `;
@@ -173,10 +179,11 @@ _INJECTED_JS = r"""
 
   /* ── Pre-populate from existing config ───────────────────────────────── */
   const ic = window.__lingqInitialConfig || {};
-  if (ic.api_key)      document.getElementById('__lak').value = ic.api_key;
-  if (ic.language)     document.getElementById('__llg').value = ic.language;
-  if (ic.title)        document.getElementById('__lti').value = ic.title;
-  if (ic.collection_id) document.getElementById('__lco').value = String(ic.collection_id);
+  if (ic.api_key)          document.getElementById('__lak').value = ic.api_key;
+  if (ic.language)         document.getElementById('__llg').value = ic.language;
+  if (ic.browser_language) document.getElementById('__lbl').value = ic.browser_language;
+  if (ic.title)            document.getElementById('__lti').value = ic.title;
+  if (ic.collection_id)    document.getElementById('__lco').value = String(ic.collection_id);
 
   /* ── State ───────────────────────────────────────────────────────────── */
   let selectors = (ic.selectors && ic.selectors.length) ? [...ic.selectors] : [];
@@ -308,12 +315,13 @@ _INJECTED_JS = r"""
   function buildConfig() {
     var colRaw = document.getElementById('__lco').value.trim();
     return {
-      url:           location.href,
-      selectors:     selectors.slice(),
-      api_key:       document.getElementById('__lak').value.trim(),
-      language:      document.getElementById('__llg').value.trim() || 'en',
-      title:         document.getElementById('__lti').value.trim() || null,
-      collection_id: colRaw ? (parseInt(colRaw, 10) || null) : null,
+      url:              location.href,
+      selectors:        selectors.slice(),
+      api_key:          document.getElementById('__lak').value.trim(),
+      language:         document.getElementById('__llg').value.trim() || 'en',
+      browser_language: document.getElementById('__lbl').value.trim() || null,
+      title:            document.getElementById('__lti').value.trim() || null,
+      collection_id:    colRaw ? (parseInt(colRaw, 10) || null) : null,
     };
   }
 
@@ -329,6 +337,12 @@ _INJECTED_JS = r"""
     setStatus('Config saved \u2014 continue selecting or exit.');
   });
 
+  document.getElementById('__lbr').addEventListener('click', function() {
+    window.__lingqConfig = buildConfig();
+    window.__lingqReload = true;
+    setStatus('Reloading with language\u2026');
+  });
+
 })();
 """
 
@@ -337,7 +351,23 @@ _INJECTED_JS = r"""
 # Python helpers                                                                #
 # --------------------------------------------------------------------------- #
 
-_DEFAULT_CONFIG = "lingq_config.json"
+def _config_path_for_url(url: str) -> Path:
+    """Derive a per-site config filename from a URL's hostname.
+
+    Examples:
+      https://www.usccb.org/bible/... → lingq_usccb-org.json
+      https://ibreviary.com/m2/...   → lingq_ibreviary-com.json
+    """
+    from urllib.parse import urlparse  # noqa: PLC0415
+    host = urlparse(url).netloc.lower()
+    host = re.sub(r"^www\.", "", host)
+    slug = re.sub(r"[^a-z0-9]+", "-", host).strip("-") or "site"
+    return Path(f"lingq_{slug}.json")
+
+
+def _find_config_files() -> list[Path]:
+    """Return all lingq_*.json files in the current directory."""
+    return sorted(Path(".").glob("lingq_*.json"))
 
 
 def _inject_script(initial_config: dict | None) -> str:
@@ -371,53 +401,93 @@ def interactive_mode(url: str, config_path: Path) -> dict:
         )
         sys.exit(1)
 
-    # Load existing config for pre-population (nice for editing a saved config)
+    # Load existing config for pre-population.
+    # If the saved URL matches the current URL, restore everything.
+    # If the URL differs (new site), only carry over the API key so the
+    # user starts with a clean slate instead of stale selectors/settings.
     initial_config: dict | None = None
     if config_path.exists():
         try:
-            initial_config = json.loads(config_path.read_text(encoding="utf-8"))
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            if saved.get("url", "").rstrip("/") == url.rstrip("/"):
+                initial_config = saved
+            else:
+                api_key = saved.get("api_key") or ""
+                initial_config = {"api_key": api_key} if api_key else None
+                print(
+                    f"  Note: existing config is for a different URL — "
+                    f"starting fresh (API key carried over)."
+                )
         except (json.JSONDecodeError, OSError):
             pass
-
-    inject_js = _inject_script(initial_config)
 
     print(f"\nOpening browser: {url}")
     print("  • Hover over elements — they highlight in amber")
     print("  • Click to select (green) — click again to deselect")
+    print("  • Set 'Browser language' (e.g. es-ES) and click Reload to serve the page in that language")
     print("  • Fill in Settings on the right panel")
     print("  • Click \u2018Save Config & Exit\u2019 when done\n")
 
     config: dict = {}
+    current_url    = url
+    current_config = initial_config  # carries state across reloads
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
 
-        def reinject() -> None:
+        while True:
+            locale = (current_config or {}).get("browser_language") or None
+            ctx_kwargs: dict = {"locale": locale} if locale else {}
+            context = browser.new_context(**ctx_kwargs)
+            page    = context.new_page()
+            inject_js = _inject_script(current_config)
+
+            def reinject() -> None:
+                try:
+                    page.evaluate(inject_js)
+                except Exception:
+                    pass
+
+            page.on("domcontentloaded", lambda _: reinject())
+            page.goto(current_url, wait_until="domcontentloaded")
+            reinject()
+
             try:
-                page.evaluate(inject_js)
-            except Exception:
-                pass
+                # Wait for the user to either save+exit OR request a language reload
+                page.wait_for_function(
+                    "window.__lingqDone || window.__lingqReload", timeout=0
+                )
+                partial = page.evaluate("window.__lingqConfig") or {}
 
-        # Re-inject after every navigation so the sidebar survives link clicks
-        page.on("domcontentloaded", lambda _: reinject())
-        page.goto(url, wait_until="domcontentloaded")
-        reinject()  # also inject immediately in case the event already fired
+                if page.evaluate("window.__lingqReload"):
+                    # User changed Browser Language — restart context with new locale
+                    current_config = partial
+                    current_url    = partial.get("url") or current_url
+                    new_locale     = partial.get("browser_language") or "none"
+                    print(f"  Reloading with browser language: {new_locale}")
+                    context.close()
+                    continue
+
+                config = partial
+
+            except Exception:
+                # Browser closed by user before saving
+                try:
+                    config = page.evaluate("window.__lingqConfig") or {}
+                except Exception:
+                    config = {}
+            finally:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
+            break  # normal exit (Save & Exit clicked or browser closed)
 
         try:
-            # Wait indefinitely — timeout=0 means no timeout in Playwright
-            page.wait_for_function("window.__lingqDone === true", timeout=0)
-            config = page.evaluate("window.__lingqConfig") or {}
+            browser.close()
         except Exception:
-            # Browser was closed by the user before clicking Save & Exit
-            try:
-                config = page.evaluate("window.__lingqConfig") or {}
-            except Exception:
-                config = {}
-        finally:
-            try:
-                browser.close()
-            except Exception:
-                pass
+            pass
 
     if not config:
         print("WARNING: No config was saved (browser closed without saving).", file=sys.stderr)
@@ -445,13 +515,15 @@ def headless_mode(config: dict, upload: bool, out_dir: str, min_words: int) -> i
         print("ERROR: config has no 'url'.", file=sys.stderr)
         return 1
 
-    selectors   = config.get("selectors") or None
-    api_key     = config.get("api_key") or os.getenv("LINGQ_API_KEY")
-    language    = config.get("language") or "en"
-    title_ovr   = config.get("title") or None
-    collection  = config.get("collection_id") or None
-    source_lang = config.get("source_lang") or None
-    accept_lang = config.get("accept_language") or None
+    selectors        = config.get("selectors") or None
+    api_key          = config.get("api_key") or os.getenv("LINGQ_API_KEY")
+    language         = config.get("language") or "en"
+    title_ovr        = config.get("title") or None
+    collection       = config.get("collection_id") or None
+    source_lang      = config.get("source_lang") or None
+    browser_language = config.get("browser_language") or None
+    # accept_language (full header) takes precedence; fall back to browser_language
+    accept_lang      = config.get("accept_language") or browser_language or None
 
     source_url = url
     if source_lang:
@@ -541,8 +613,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--url", help="Webpage URL (required for interactive mode)")
     p.add_argument(
         "--config",
-        default=_DEFAULT_CONFIG,
-        help=f"Config file path (default: {_DEFAULT_CONFIG})",
+        default=None,
+        help=(
+            "Config file path.  Defaults to a name derived from the URL "
+            "(e.g. lingq_usccb-org.json).  In headless mode, auto-detected "
+            "if only one lingq_*.json exists in the current directory."
+        ),
     )
     p.add_argument(
         "--headless",
@@ -571,10 +647,32 @@ def _print_headless_hint(config_path: Path, upload: bool = False) -> None:
 
 def main() -> int:
     args = parse_args()
-    config_path = Path(args.config)
 
     # ── Headless mode ────────────────────────────────────────────────────── #
     if args.headless:
+        if args.config:
+            config_path = Path(args.config)
+        else:
+            # Auto-detect: find lingq_*.json files in the current directory
+            candidates = _find_config_files()
+            if len(candidates) == 1:
+                config_path = candidates[0]
+                print(f"Using config: {config_path}")
+            elif len(candidates) > 1:
+                print(
+                    "ERROR: multiple config files found — specify one with --config:\n"
+                    + "\n".join(f"  python lingq_interactive.py --headless --config {c}" for c in candidates),
+                    file=sys.stderr,
+                )
+                return 1
+            else:
+                print(
+                    "ERROR: no config file found.\n"
+                    "  Run without --headless first to create one.",
+                    file=sys.stderr,
+                )
+                return 1
+
         if not config_path.exists():
             print(
                 f"ERROR: config file not found: {config_path}\n"
@@ -598,10 +696,10 @@ def main() -> int:
     # ── Interactive mode ─────────────────────────────────────────────────── #
     url = args.url
     if not url:
-        # Fall back to the URL stored in an existing config
-        if config_path.exists():
+        # No --url given: try to load the URL from an explicit --config file
+        if args.config and Path(args.config).exists():
             try:
-                stored = json.loads(config_path.read_text(encoding="utf-8"))
+                stored = json.loads(Path(args.config).read_text(encoding="utf-8"))
                 url = stored.get("url", "")
             except (json.JSONDecodeError, OSError):
                 pass
@@ -612,6 +710,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+
+    # Derive config path from URL unless the user explicitly chose one
+    config_path = Path(args.config) if args.config else _config_path_for_url(url)
 
     config = interactive_mode(url=url, config_path=config_path)
 

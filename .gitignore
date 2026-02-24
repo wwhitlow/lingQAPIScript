@@ -3,3 +3,4 @@
 imports/
 __pycache__
 lingq_config.json
+*.json
