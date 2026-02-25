@@ -383,6 +383,74 @@ def _load_lingq_import():
     return ldi
 
 
+def _run_pre_step(page, step: dict) -> None:
+    """Execute one pre-navigation step on a Playwright page.
+
+    Supported actions:
+      goto           — navigate to ``step["url"]``
+      fill           — fill an input: ``step["selector"]``, ``step["value"]``
+      select         — choose a <select> option: ``step["selector"]``, ``step["value"]``
+      click          — click an element: ``step["selector"]``
+      wait_for_load  — wait until DOMContentLoaded fires
+      wait           — sleep for ``step["ms"]`` milliseconds (default 500)
+    """
+    action = (step.get("action") or "").strip()
+    if action == "goto":
+        target = (step.get("url") or "").strip()
+        if target:
+            page.goto(target, wait_until="domcontentloaded")
+    elif action == "fill":
+        page.fill(step.get("selector", ""), step.get("value", ""))
+    elif action == "select":
+        page.select_option(step.get("selector", ""), value=step.get("value", ""))
+    elif action == "click":
+        page.click(step.get("selector", ""))
+    elif action == "wait_for_load":
+        page.wait_for_load_state("domcontentloaded")
+    elif action == "wait":
+        ms = int(step.get("ms") or 500)
+        page.wait_for_timeout(ms)
+    else:
+        print(f"  WARNING: unknown pre-step action '{action}' — skipped.", file=sys.stderr)
+
+
+def _fetch_html_with_playwright(config: dict, url: str) -> str:
+    """Fetch page HTML via a headless Playwright session.
+
+    Used when *config* contains ``pre_steps`` that must run in the same
+    browser context (e.g. submitting a form that sets a session cookie).
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415
+    except ImportError:
+        print(
+            "ERROR: playwright is not installed.\n"
+            "  pip install playwright\n"
+            "  playwright install chromium",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    pre_steps = config.get("pre_steps") or []
+    locale = config.get("browser_language") or None
+    ctx_kwargs: dict = {"locale": locale} if locale else {}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(**ctx_kwargs)
+        page = context.new_page()
+        try:
+            for i, step in enumerate(pre_steps, 1):
+                print(f"    step {i}/{len(pre_steps)}: {step.get('action', '?')}")
+                _run_pre_step(page, step)
+            page.goto(url, wait_until="domcontentloaded")
+            html = page.content()
+        finally:
+            browser.close()
+
+    return html
+
+
 # --------------------------------------------------------------------------- #
 # Interactive mode                                                              #
 # --------------------------------------------------------------------------- #
@@ -447,6 +515,15 @@ def interactive_mode(url: str, config_path: Path) -> dict:
                     page.evaluate(inject_js)
                 except Exception:
                     pass
+
+            # Run pre_steps before registering the re-injection handler so
+            # intermediate pages don't get the selector sidebar injected.
+            pre_steps = (current_config or {}).get("pre_steps") or []
+            if pre_steps:
+                print(f"  Running {len(pre_steps)} pre-navigation step(s)…")
+                for i, step in enumerate(pre_steps, 1):
+                    print(f"  Pre-step {i}: {step.get('action', '?')}")
+                    _run_pre_step(page, step)
 
             page.on("domcontentloaded", lambda _: reinject())
             page.goto(current_url, wait_until="domcontentloaded")
@@ -531,10 +608,15 @@ def headless_mode(config: dict, upload: bool, out_dir: str, min_words: int) -> i
 
     title_seed = title_ovr or ldi.derive_default_title(source_url)
 
+    pre_steps = config.get("pre_steps") or []
     try:
-        html      = ldi.fetch_html(source_url, accept_language=accept_lang)
+        if pre_steps:
+            print(f"  Running {len(pre_steps)} pre-navigation step(s) before fetch…")
+            html = _fetch_html_with_playwright(config, source_url)
+        else:
+            html = ldi.fetch_html(source_url, accept_language=accept_lang)
         extracted = ldi.extract_content(html, fallback_title=title_seed, selectors=selectors)
-    except req.RequestException as exc:
+    except Exception as exc:
         print(f"ERROR: fetch failed: {exc}", file=sys.stderr)
         return 1
 

@@ -298,6 +298,34 @@ _HTML = """<!DOCTYPE html>
     #add-sel:hover { border-color: #10b981; color: #10b981; }
     .hint { font-size: 11px; color: #94a3b8; margin-top: 6px; line-height: 1.5; }
 
+    /* Pre-navigation steps */
+    #step-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+    .step-row { padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+    .step-header { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .step-action {
+      flex: 1; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
+      font-size: 13px; background: white; color: #1e293b; cursor: pointer;
+    }
+    .step-params { display: flex; flex-direction: column; gap: 6px; }
+    .step-param-row { display: flex; gap: 8px; align-items: center; }
+    .step-param-label { font-size: 11px; color: #64748b; white-space: nowrap; min-width: 64px; }
+    .step-param-input {
+      flex: 1; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px;
+      font-size: 12px; font-family: ui-monospace, monospace; background: white; color: #1e293b;
+    }
+    .step-param-input:focus { outline: none; border-color: #10b981; }
+    .rm-step {
+      padding: 5px 9px; border: 1px solid #fca5a5; background: white;
+      color: #ef4444; border-radius: 6px; cursor: pointer; font-size: 14px; flex-shrink: 0;
+    }
+    .rm-step:hover { background: #fef2f2; }
+    #add-step {
+      padding: 7px 14px; border: 1px dashed #94a3b8; background: transparent;
+      color: #64748b; border-radius: 6px; cursor: pointer; font-size: 12px;
+      width: 100%; transition: all .15s; margin-top: 2px;
+    }
+    #add-step:hover { border-color: #3b82f6; color: #3b82f6; }
+
     /* ── Action bar ──────────────────────────────────────────────────────── */
     #actions {
       background: white; border-top: 1px solid #e2e8f0;
@@ -431,6 +459,16 @@ _HTML = """<!DOCTYPE html>
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-title">Pre-navigation Steps <span class="opt" style="text-transform:none;letter-spacing:0">(optional)</span></div>
+        <p class="hint" style="margin-bottom:10px">
+          Steps to run <em>before</em> the main page loads — useful when a site requires
+          submitting a form or setting a cookie first (e.g. choosing a language via a PHP form).
+        </p>
+        <div id="step-list"></div>
+        <button id="add-step" onclick="addStep()">&#43; Add step</button>
+      </div>
+
     </div><!-- /form-wrap -->
 
     <!-- Action bar -->
@@ -530,6 +568,10 @@ _HTML = """<!DOCTYPE html>
     sl.innerHTML = '';
     (c.selectors || []).forEach(s => addSel(s));
 
+    const stl = document.getElementById('step-list');
+    stl.innerHTML = '';
+    (c.pre_steps || []).forEach(s => addStep(s));
+
     show('form-wrap'); show('actions'); show('log');
     document.getElementById('empty').style.display = 'none';
   }
@@ -549,6 +591,80 @@ _HTML = """<!DOCTYPE html>
       .map(i => i.value.trim()).filter(Boolean);
   }
 
+  /* ── Pre-navigation steps ─────────────────────────────────────────────── */
+  const _STEP_ACTIONS = [
+    ['goto',          'Navigate to URL'],
+    ['select',        'Select dropdown option'],
+    ['fill',          'Fill text field'],
+    ['click',         'Click element'],
+    ['wait_for_load', 'Wait for page load'],
+    ['wait',          'Wait (milliseconds)'],
+  ];
+
+  function addStep(s) {
+    s = s || {};
+    const action = s.action || 'goto';
+    const row = document.createElement('div');
+    row.className = 'step-row';
+    const opts = _STEP_ACTIONS.map(([v, l]) =>
+      `<option value="${v}"${v === action ? ' selected' : ''}>${esc(l)}</option>`
+    ).join('');
+    row.innerHTML =
+      `<div class="step-header">` +
+        `<select class="step-action" onchange="refreshStepRow(this.closest('.step-row'))">${opts}</select>` +
+        `<button class="rm-step" onclick="this.closest('.step-row').remove()" title="Remove step">&#10005;</button>` +
+      `</div>` +
+      `<div class="step-params"></div>`;
+    document.getElementById('step-list').appendChild(row);
+    refreshStepRow(row, s);
+  }
+
+  function refreshStepRow(row, initial) {
+    initial = initial || {};
+    const action = row.querySelector('.step-action').value;
+    const pd = row.querySelector('.step-params');
+    pd.innerHTML = '';
+
+    function addParam(label, name, placeholder, value) {
+      const div = document.createElement('div');
+      div.className = 'step-param-row';
+      div.innerHTML =
+        `<span class="step-param-label">${esc(label)}</span>` +
+        `<input class="step-param-input" data-param="${name}" type="text"` +
+        ` placeholder="${esc(placeholder)}" value="${esc(value || '')}" />`;
+      pd.appendChild(div);
+    }
+
+    if (action === 'goto') {
+      addParam('URL', 'url', 'https://example.com/set-lang?lang=es', initial.url || '');
+    } else if (action === 'fill') {
+      addParam('Selector', 'selector', 'input[name="username"]', initial.selector || '');
+      addParam('Value',    'value',    'text to type',           initial.value    || '');
+    } else if (action === 'select') {
+      addParam('Selector', 'selector', 'select[name="lang"]', initial.selector || '');
+      addParam('Value',    'value',    'es',                  initial.value    || '');
+    } else if (action === 'click') {
+      addParam('Selector', 'selector', 'button[type="submit"]', initial.selector || '');
+    } else if (action === 'wait') {
+      const msVal = initial.ms != null ? String(initial.ms) : '';
+      addParam('Milliseconds', 'ms', '500', msVal);
+    }
+    // wait_for_load: no params
+  }
+
+  function getSteps() {
+    return [...document.querySelectorAll('#step-list .step-row')].map(row => {
+      const action = row.querySelector('.step-action').value;
+      const step = { action };
+      row.querySelectorAll('.step-param-input').forEach(inp => {
+        const key = inp.dataset.param;
+        const val = inp.value.trim();
+        if (val) step[key] = key === 'ms' ? (parseInt(val, 10) || 500) : val;
+      });
+      return step;
+    }).filter(s => s.action);
+  }
+
   /* ── Build config from form ───────────────────────────────────────────── */
   function buildConfig() {
     const colRaw = g('f-coll').trim();
@@ -560,6 +676,7 @@ _HTML = """<!DOCTYPE html>
       browser_language: g('f-bloc').trim() || null,
       title:            g('f-title').trim() || null,
       collection_id:    colRaw ? (parseInt(colRaw, 10) || null) : null,
+      pre_steps:        getSteps(),
     };
   }
 
