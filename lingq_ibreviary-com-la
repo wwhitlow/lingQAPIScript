@@ -1,0 +1,32 @@
+{
+  "url": "https://www.ibreviary.com/m2/breviario.php?s=ufficio_delle_letture",
+  "selectors": [
+    "#contenuto > div.inner > p:nth-child(6)"
+  ],
+  "api_key": "",
+  "language": "en",
+  "browser_language": null,
+  "title": null,
+  "collection_id": null,
+  "pre_steps": [
+    {
+      "action": "goto",
+      "url": "https://www.ibreviary.com/m2/opzioni.php"
+    },
+    {
+      "action": "click",
+      "selector": "input[value='la']"
+    },
+    {
+      "action": "click",
+      "selector": "input[type='submit']"
+    },
+    {
+      "action": "wait_for_load"
+    },
+    {
+      "action": "goto",
+      "url": "https://www.ibreviary.com/m2/breviario.php?s=ufficio_delle_letture"
+    }
+  ]
+}

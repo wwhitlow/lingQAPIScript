@@ -409,10 +409,14 @@ _HTML = """<!DOCTYPE html>
     <div id="form-wrap">
 
       <div class="card">
-        <div class="card-title">Site URL</div>
+        <div class="card-title">Site</div>
         <div class="field">
           <label>Page address</label>
-          <input id="f-url" type="url" placeholder="https://example.com/daily-reading" />
+          <input id="f-url" type="url" placeholder="https://example.com/daily-reading" oninput="onUrlInput()" />
+        </div>
+        <div class="field">
+          <label>Config name <span class="opt">(rename to keep separate configs for the same site, e.g. different languages)</span></label>
+          <input id="f-name" type="text" placeholder="lingq_example-com.json" />
         </div>
       </div>
 
@@ -529,7 +533,8 @@ _HTML = """<!DOCTYPE html>
       el.className = 'site-item' + (s.filename === currentFile ? ' active' : '');
       el.dataset.file = s.filename;
       el.onclick = () => openSite(s.filename);
-      el.innerHTML = `<div class="site-name">${esc(s.name)}</div>
+      const stem = s.filename.replace(/^lingq_/, '').replace(/\.json$/, '');
+      el.innerHTML = `<div class="site-name">${esc(stem)}</div>
                       <div class="site-url" title="${esc(s.url)}">${esc(s.url)}</div>`;
       list.appendChild(el);
     });
@@ -558,6 +563,7 @@ _HTML = """<!DOCTYPE html>
   /* ── Form population ──────────────────────────────────────────────────── */
   function populateForm(c) {
     v('f-url',  c.url              || '');
+    v('f-name', currentFile        || '');
     v('f-key',  c.api_key          || '');
     v('f-lang', c.language         || 'en');
     v('f-bloc', c.browser_language || '');
@@ -688,13 +694,26 @@ _HTML = """<!DOCTYPE html>
     } catch { return 'lingq_site.json'; }
   }
 
+  function onUrlInput() {
+    // Auto-fill config name only when creating a new site (not editing existing)
+    if (!currentFile) {
+      const url = g('f-url').trim();
+      v('f-name', url ? fileForUrl(url) : '');
+    }
+  }
+
   /* ── Save ─────────────────────────────────────────────────────────────── */
   async function saveSite() {
     const config = buildConfig();
     if (!config.url) { status('Please enter a URL first.', 'err'); return null; }
-    const filename = currentFile || fileForUrl(config.url);
+    const filename = g('f-name').trim() || fileForUrl(config.url);
+    if (!/^lingq_[a-z0-9][a-z0-9\-]*\.json$/.test(filename)) {
+      status('Config name must match: lingq_<slug>.json (lowercase, hyphens only)', 'err');
+      return null;
+    }
     await call('POST', '/api/site', { filename, config });
     currentFile = filename;
+    v('f-name', filename);
     status(`Saved: ${filename}`, 'ok');
     await loadSiteList();
     highlightActive();

@@ -398,15 +398,23 @@ def _run_pre_step(page, step: dict) -> None:
     if action == "goto":
         target = (step.get("url") or "").strip()
         if target:
-            page.goto(target, wait_until="domcontentloaded")
+            page.goto(target, wait_until="load")
     elif action == "fill":
         page.fill(step.get("selector", ""), step.get("value", ""))
     elif action == "select":
         page.select_option(step.get("selector", ""), value=step.get("value", ""))
     elif action == "click":
-        page.click(step.get("selector", ""))
+        # Wrap in expect_navigation so that form submits / redirects are fully
+        # awaited before the next step runs.  Falls back gracefully if the click
+        # doesn't trigger a navigation (e.g. an in-page JS handler).
+        selector = step.get("selector", "")
+        try:
+            with page.expect_navigation(wait_until="load", timeout=10000):
+                page.click(selector)
+        except Exception:
+            pass  # no navigation — click was already handled in-page
     elif action == "wait_for_load":
-        page.wait_for_load_state("domcontentloaded")
+        page.wait_for_load_state("load")
     elif action == "wait":
         ms = int(step.get("ms") or 500)
         page.wait_for_timeout(ms)
@@ -443,7 +451,7 @@ def _fetch_html_with_playwright(config: dict, url: str) -> str:
             for i, step in enumerate(pre_steps, 1):
                 print(f"    step {i}/{len(pre_steps)}: {step.get('action', '?')}")
                 _run_pre_step(page, step)
-            page.goto(url, wait_until="domcontentloaded")
+            page.goto(url, wait_until="load")
             html = page.content()
         finally:
             browser.close()
