@@ -165,6 +165,12 @@ _INJECTED_JS = r"""
           <label>Collection / Course ID <span style="color:#64748b">(optional)</span></label>
           <input id="__lco" type="text" placeholder="123456" />
         </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+            <input id="__ldt" type="checkbox" style="width:13px;height:13px;accent-color:#10b981;flex-shrink:0" />
+            Append today&apos;s date to title
+          </label>
+        </div>
       </div>
     </div>
     <div class="actions">
@@ -184,6 +190,7 @@ _INJECTED_JS = r"""
   if (ic.browser_language) document.getElementById('__lbl').value = ic.browser_language;
   if (ic.title)            document.getElementById('__lti').value = ic.title;
   if (ic.collection_id)    document.getElementById('__lco').value = String(ic.collection_id);
+  if (ic.include_date)     document.getElementById('__ldt').checked = true;
 
   /* ── State ───────────────────────────────────────────────────────────── */
   let selectors = (ic.selectors && ic.selectors.length) ? [...ic.selectors] : [];
@@ -322,6 +329,7 @@ _INJECTED_JS = r"""
       browser_language: document.getElementById('__lbl').value.trim() || null,
       title:            document.getElementById('__lti').value.trim() || null,
       collection_id:    colRaw ? (parseInt(colRaw, 10) || null) : null,
+      include_date:     document.getElementById('__ldt').checked,
     };
   }
 
@@ -604,6 +612,9 @@ def headless_mode(config: dict, upload: bool, out_dir: str, min_words: int) -> i
     api_key          = config.get("api_key") or os.getenv("LINGQ_API_KEY")
     language         = config.get("language") or "en"
     title_ovr        = config.get("title") or None
+    include_date     = bool(config.get("include_date", False))
+    if title_ovr and include_date:
+        title_ovr = f"{title_ovr} {dt.datetime.now().strftime('%Y-%m-%d')}"
     collection       = config.get("collection_id") or None
     source_lang      = config.get("source_lang") or None
     browser_language = config.get("browser_language") or None

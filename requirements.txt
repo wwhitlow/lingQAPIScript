@@ -8,3 +8,5 @@ flask>=3.0
 # Audio transcription — lingq_audio_import.py --transcribe
 # Requires ffmpeg on PATH: brew install ffmpeg  (macOS) / apt install ffmpeg  (Linux)
 openai-whisper>=20231117
+# MP3 duration detection (used to merge short tracks before upload)
+mutagen>=1.47

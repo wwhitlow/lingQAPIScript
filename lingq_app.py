@@ -188,6 +188,8 @@ def api_audio():
     start_track = int(body.get("start_track") or 1)
     if start_track != 1:
         cmd += ["--start-track", str(start_track)]
+    min_duration = float(body.get("min_duration") if body.get("min_duration") is not None else 10)
+    cmd += ["--min-duration", str(min_duration)]
     if body.get("transcribe"):
         cmd.append("--transcribe")
         whisper_model = (body.get("whisper_model") or "medium").strip()
@@ -504,6 +506,13 @@ _HTML = """<!DOCTYPE html>
             <input id="f-coll" type="text" placeholder="123456" />
           </div>
         </div>
+        <div class="field" style="margin-top:4px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="f-date" style="width:15px;height:15px;accent-color:#10b981" />
+            Append today&#8217;s date to lesson title
+            <span class="opt">(useful for daily sites where the title stays the same)</span>
+          </label>
+        </div>
       </div>
 
       <div class="card">
@@ -566,6 +575,10 @@ _HTML = """<!DOCTYPE html>
           <div class="field" style="max-width:130px">
             <label>Start track # <span class="opt">(default: 1)</span></label>
             <input id="a-start" type="number" min="1" value="1" />
+          </div>
+          <div class="field" style="max-width:160px">
+            <label>Min track duration <span class="opt">(sec)</span></label>
+            <input id="a-min-dur" type="number" min="0" value="10" title="Files shorter than this are merged with the next file. Set to 0 to disable." />
           </div>
         </div>
       </div>
@@ -733,6 +746,7 @@ _HTML = """<!DOCTYPE html>
       start_track:  parseInt(document.getElementById('a-start').value, 10) || 1,
       transcribe:   document.getElementById('a-transcribe').checked,
       whisper_model: document.getElementById('a-model').value,
+      min_duration:  parseFloat(document.getElementById('a-min-dur').value) || 0,
       dry_run,
     };
   }
@@ -808,6 +822,7 @@ _HTML = """<!DOCTYPE html>
     v('f-bloc', c.browser_language || '');
     v('f-title',c.title            || '');
     v('f-coll', c.collection_id != null ? String(c.collection_id) : '');
+    document.getElementById('f-date').checked = !!(c.include_date);
 
     const sl = document.getElementById('sel-list');
     sl.innerHTML = '';
@@ -921,6 +936,7 @@ _HTML = """<!DOCTYPE html>
       browser_language: g('f-bloc').trim() || null,
       title:            g('f-title').trim() || null,
       collection_id:    colRaw ? (parseInt(colRaw, 10) || null) : null,
+      include_date:     document.getElementById('f-date').checked,
       pre_steps:        getSteps(),
     };
   }
