@@ -161,6 +161,42 @@ def api_run():
     return jsonify({"job_id": _start_job(cmd)})
 
 
+@app.route("/api/audio", methods=["POST"])
+def api_audio():
+    """Start a batch audio import job."""
+    body = request.get_json(force=True)
+    mp3_dir  = (body.get("dir")    or "").strip()
+    prefix   = (body.get("prefix") or "").strip()
+    language = (body.get("language") or "es").strip()
+    api_key  = (body.get("api_key") or "").strip()
+    dry_run  = bool(body.get("dry_run"))
+    if not mp3_dir or not prefix:
+        return jsonify({"error": "dir and prefix are required"}), 400
+    if not dry_run and not api_key:
+        return jsonify({"error": "api_key is required for upload"}), 400
+    cmd = [
+        sys.executable, "lingq_audio_import.py",
+        "--dir",      mp3_dir,
+        "--prefix",   prefix,
+        "--language", language,
+    ]
+    if api_key:
+        cmd += ["--api-key", api_key]
+    collection = body.get("collection")
+    if collection:
+        cmd += ["--collection", str(collection)]
+    start_track = int(body.get("start_track") or 1)
+    if start_track != 1:
+        cmd += ["--start-track", str(start_track)]
+    if body.get("transcribe"):
+        cmd.append("--transcribe")
+        whisper_model = (body.get("whisper_model") or "medium").strip()
+        cmd += ["--whisper-model", whisper_model]
+    if dry_run:
+        cmd.append("--dry-run")
+    return jsonify({"job_id": _start_job(cmd)})
+
+
 @app.route("/api/job/<job_id>")
 def api_job(job_id: str):
     offset = max(0, int(request.args.get("offset", 0)))
@@ -217,12 +253,20 @@ _HTML = """<!DOCTYPE html>
       letter-spacing: .1em; color: #475569;
     }
     #new-btn {
-      margin: 0 10px 10px; padding: 9px 12px;
+      margin: 0 10px 6px; padding: 9px 12px;
       background: #10b981; color: white; border: none; border-radius: 6px;
       cursor: pointer; font-size: 13px; font-weight: 600; width: calc(100% - 20px);
       transition: background .15s;
     }
     #new-btn:hover { background: #059669; }
+    #audio-btn {
+      margin: 0 10px 10px; padding: 9px 12px;
+      background: #7c3aed; color: white; border: none; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-weight: 600; width: calc(100% - 20px);
+      transition: background .15s;
+    }
+    #audio-btn:hover { background: #6d28d9; }
+    #audio-btn.active { background: #5b21b6; box-shadow: inset 0 1px 3px rgba(0,0,0,.3); }
     #site-list { flex: 1; overflow-y: auto; }
     .site-item {
       padding: 10px 14px; cursor: pointer;
@@ -326,6 +370,12 @@ _HTML = """<!DOCTYPE html>
     }
     #add-step:hover { border-color: #3b82f6; color: #3b82f6; }
 
+    /* ── Audio Import panel ──────────────────────────────────────────────── */
+    #audio-panel {
+      flex: 1; overflow-y: auto; padding: 18px; display: none;
+    }
+    #audio-panel .card-title { color: #7c3aed; }
+
     /* ── Action bar ──────────────────────────────────────────────────────── */
     #actions {
       background: white; border-top: 1px solid #e2e8f0;
@@ -392,6 +442,7 @@ _HTML = """<!DOCTYPE html>
   <div id="sidebar">
     <div id="sidebar-head">Your Sites</div>
     <button id="new-btn" onclick="newSite()">&#43; New Site</button>
+    <button id="audio-btn" onclick="showAudioPanel()">&#127925; Audio Import</button>
     <div id="site-list">
       <div id="no-sites">No sites yet.<br>Click <strong>+ New Site</strong> to begin.</div>
     </div>
@@ -475,6 +526,91 @@ _HTML = """<!DOCTYPE html>
 
     </div><!-- /form-wrap -->
 
+    <!-- Audio Import panel -->
+    <div id="audio-panel">
+
+      <div class="card">
+        <div class="card-title">&#127925; Audio Import</div>
+        <p class="hint" style="margin-bottom:14px">
+          Upload a directory of MP3 files to LingQ as individual lessons.
+          LingQ will auto-generate transcripts from the audio.
+          Use <strong>Preview</strong> to see the file list before uploading.
+        </p>
+        <div class="field">
+          <label>MP3 directory (absolute path on this machine)</label>
+          <input id="a-dir" type="text" placeholder="/Users/you/audiobooks/lingua-latina" />
+        </div>
+        <div class="field">
+          <label>Title prefix</label>
+          <input id="a-prefix" type="text" placeholder="Lingua Latina" />
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">LingQ Settings</div>
+        <div class="row">
+          <div class="field">
+            <label>API Key</label>
+            <input id="a-key" type="password" placeholder="Your LingQ token" autocomplete="off" />
+          </div>
+          <div class="field" style="max-width:110px">
+            <label>Language</label>
+            <input id="a-lang" type="text" placeholder="es" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Collection ID <span class="opt">(optional)</span></label>
+            <input id="a-coll" type="text" placeholder="2612735" />
+          </div>
+          <div class="field" style="max-width:130px">
+            <label>Start track # <span class="opt">(default: 1)</span></label>
+            <input id="a-start" type="number" min="1" value="1" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Transcription <span class="opt" style="text-transform:none;letter-spacing:0">(recommended)</span></div>
+        <p class="hint" style="margin-bottom:10px">
+          <strong>Whisper</strong> runs locally on your machine to generate real transcripts from the audio.
+          Requires <code>pip install openai-whisper</code> and <code>ffmpeg</code>.
+          Without transcription, the lesson title is used as placeholder text.
+        </p>
+        <div class="row">
+          <div class="field">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="a-transcribe" style="width:15px;height:15px;accent-color:#7c3aed" onchange="toggleWhisperModel()" />
+              Enable Whisper transcription
+            </label>
+          </div>
+          <div class="field" style="max-width:160px" id="whisper-model-wrap">
+            <label>Whisper model</label>
+            <select id="a-model" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;background:#f8fafc;color:#1e293b">
+              <option value="tiny">tiny — fastest</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium" selected>medium — recommended</option>
+              <option value="large">large — most accurate</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Run</div>
+        <div class="action-row" style="margin-bottom:0">
+          <button class="btn sl" id="btn-audio-preview" onclick="previewAudio()">&#128269; Preview</button>
+          <button class="btn b"  id="btn-audio-run"     onclick="runAudio()">&#9654; Import All</button>
+        </div>
+        <p class="hint" style="margin-top:10px">
+          <strong>Preview</strong> lists the files and titles without uploading.
+          <strong>Import All</strong> transcribes (if enabled) and uploads every MP3 in the directory.
+        </p>
+      </div>
+
+    </div><!-- /audio-panel -->
+
     <!-- Action bar -->
     <div id="actions">
       <div class="action-row">
@@ -533,15 +669,34 @@ _HTML = """<!DOCTYPE html>
       el.className = 'site-item' + (s.filename === currentFile ? ' active' : '');
       el.dataset.file = s.filename;
       el.onclick = () => openSite(s.filename);
-      const stem = s.filename.replace(/^lingq_/, '').replace(/\.json$/, '');
+      const stem = s.filename.replace(/^lingq_/, '').replace(/\\.json$/, '');
       el.innerHTML = `<div class="site-name">${esc(stem)}</div>
                       <div class="site-url" title="${esc(s.url)}">${esc(s.url)}</div>`;
       list.appendChild(el);
     });
   }
 
+  /* ── Panel switching ──────────────────────────────────────────────────── */
+  function showAudioPanel() {
+    hide('form-wrap'); hide('actions'); hide('empty');
+    document.getElementById('audio-panel').style.display = 'block';
+    document.getElementById('audio-btn').classList.add('active');
+    currentFile = null;
+    highlightActive();
+    clearLog();
+    show('log');
+    status('Ready');
+  }
+
+  function showSitePanel() {
+    hide('audio-panel');
+    document.getElementById('audio-btn').classList.remove('active');
+    // The site panel state is restored by populateForm / empty div
+  }
+
   /* ── Open / new site ──────────────────────────────────────────────────── */
   async function openSite(filename) {
+    showSitePanel();
     const config = await call('GET', `/api/site/${filename}`);
     currentFile = filename;
     populateForm(config);
@@ -549,6 +704,7 @@ _HTML = """<!DOCTYPE html>
   }
 
   function newSite() {
+    showSitePanel();
     currentFile = null;
     populateForm({});
     highlightActive();
@@ -558,6 +714,89 @@ _HTML = """<!DOCTYPE html>
   function highlightActive() {
     document.querySelectorAll('.site-item')
       .forEach(el => el.classList.toggle('active', el.dataset.file === currentFile));
+  }
+
+  /* ── Audio Import ──────────────────────────────────────────────────────── */
+  function _audioParams(dry_run) {
+    const dir    = g('a-dir').trim();
+    const prefix = g('a-prefix').trim();
+    const apiKey = g('a-key').trim();
+    if (!dir)    { status('Please enter an MP3 directory.', 'err'); return null; }
+    if (!prefix) { status('Please enter a title prefix.', 'err');   return null; }
+    if (!apiKey) { status('Please enter your API key.', 'err');     return null; }
+    return {
+      dir,
+      prefix,
+      api_key:     apiKey,
+      language:    g('a-lang').trim() || 'es',
+      collection:  g('a-coll').trim() || null,
+      start_track:  parseInt(document.getElementById('a-start').value, 10) || 1,
+      transcribe:   document.getElementById('a-transcribe').checked,
+      whisper_model: document.getElementById('a-model').value,
+      dry_run,
+    };
+  }
+
+  function toggleWhisperModel() {
+    // The model select is always visible but could be styled differently if needed
+  }
+
+  async function previewAudio() {
+    const params = _audioParams(true);
+    if (!params) return;
+    clearLog();
+    log('Scanning directory…', 'linfo');
+    busy(true);
+    ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = true; });
+    try {
+      const { job_id } = await call('POST', '/api/audio', params);
+      pollAudio(job_id);
+    } catch (e) {
+      busy(false);
+      ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = false; });
+      status('Error: ' + e.message, 'err');
+    }
+  }
+
+  async function runAudio() {
+    const params = _audioParams(false);
+    if (!params) return;
+    if (!confirm(`Upload all MP3s from:\n${params.dir}\n\nTitle prefix: "${params.prefix}"\nLanguage: ${params.language}\n\nProceed?`)) return;
+    clearLog();
+    log('Starting upload…', 'linfo');
+    busy(true);
+    ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = true; });
+    try {
+      const { job_id } = await call('POST', '/api/audio', params);
+      pollAudio(job_id);
+    } catch (e) {
+      busy(false);
+      ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = false; });
+      status('Error: ' + e.message, 'err');
+    }
+  }
+
+  function pollAudio(jobId) {
+    let offset = 0;
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const data = await call('GET', `/api/job/${jobId}?offset=${offset}`);
+        data.lines.forEach(line => log(line));
+        offset += data.lines.length;
+        if (data.done) {
+          clearInterval(pollTimer);
+          busy(false);
+          ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = false; });
+          status(data.rc === 0 ? 'Done.' : 'Finished with errors — see output above.', data.rc === 0 ? 'ok' : 'err');
+        }
+      } catch (e) {
+        clearInterval(pollTimer);
+        busy(false);
+        ['btn-audio-preview', 'btn-audio-run'].forEach(id => { document.getElementById(id).disabled = false; });
+        status('Connection error: ' + e.message, 'err');
+      }
+    }, 600);
   }
 
   /* ── Form population ──────────────────────────────────────────────────── */
@@ -688,7 +927,7 @@ _HTML = """<!DOCTYPE html>
 
   function fileForUrl(url) {
     try {
-      const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+      const host = new URL(url).hostname.toLowerCase().replace(/^www\\./, '');
       const slug = host.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'site';
       return `lingq_${slug}.json`;
     } catch { return 'lingq_site.json'; }
@@ -707,7 +946,7 @@ _HTML = """<!DOCTYPE html>
     const config = buildConfig();
     if (!config.url) { status('Please enter a URL first.', 'err'); return null; }
     const filename = g('f-name').trim() || fileForUrl(config.url);
-    if (!/^lingq_[a-z0-9][a-z0-9\-]*\.json$/.test(filename)) {
+    if (!/^lingq_[a-z0-9][a-z0-9-]*\\.json$/.test(filename)) {
       status('Config name must match: lingq_<slug>.json (lowercase, hyphens only)', 'err');
       return null;
     }

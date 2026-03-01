@@ -5,3 +5,6 @@ requests>=2.31.0
 playwright>=1.40
 # Web UI (lingq_app.py / start.command)
 flask>=3.0
+# Audio transcription — lingq_audio_import.py --transcribe
+# Requires ffmpeg on PATH: brew install ffmpeg  (macOS) / apt install ffmpeg  (Linux)
+openai-whisper>=20231117
