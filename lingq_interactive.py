@@ -614,7 +614,7 @@ def headless_mode(config: dict, upload: bool, out_dir: str, min_words: int) -> i
     title_ovr        = config.get("title") or None
     include_date     = bool(config.get("include_date", False))
     if title_ovr and include_date:
-        title_ovr = f"{title_ovr} {dt.datetime.now().strftime('%Y-%m-%d')}"
+        title_ovr = f"{title_ovr} {dt.datetime.now().strftime('%m-%d-%Y')}"
     collection       = config.get("collection_id") or None
     source_lang      = config.get("source_lang") or None
     browser_language = config.get("browser_language") or None
